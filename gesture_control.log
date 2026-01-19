@@ -4,3 +4,41 @@
 2025-09-03 15:59:22,856 - INFO - Gesture detection stopped
 2025-09-03 15:59:24,306 - INFO - Settings saved
 2025-09-03 15:59:24,323 - ERROR - Error updating displays: invalid command name ".!frame2.!labelframe2.!labelframe3.!listbox"
+2025-11-22 22:40:39,730 - INFO - Settings loaded
+2025-11-22 22:40:45,939 - INFO - Gesture detection started
+2025-11-22 22:41:40,751 - INFO - Gesture detection stopped
+2025-11-22 22:41:42,042 - INFO - Settings saved
+2025-11-22 22:45:16,028 - INFO - Settings loaded
+2025-11-22 22:45:28,841 - INFO - Gesture detection started
+2025-11-22 22:45:58,510 - ERROR - Error updating video display: can't invoke "image" command: application has been destroyed
+2025-11-22 22:45:58,511 - ERROR - Error updating displays: invalid command name ".!frame2.!frame2.!frame.!label2"
+2025-11-23 15:23:45,214 - INFO - Settings loaded
+2025-11-23 15:25:20,205 - INFO - Gesture detection started
+2025-11-23 15:25:21,638 - ERROR - Error in detection loop: 'GestureControlPro' object has no attribute 'is_dragging'
+2025-11-23 15:25:21,808 - ERROR - Error in detection loop: 'GestureControlPro' object has no attribute 'is_dragging'
+2025-11-23 15:25:21,970 - ERROR - Error in detection loop: 'GestureControlPro' object has no attribute 'is_dragging'
+2025-11-23 15:25:22,146 - ERROR - Error in detection loop: 'GestureControlPro' object has no attribute 'is_dragging'
+2025-11-23 15:25:22,305 - ERROR - Error in detection loop: 'GestureControlPro' object has no attribute 'is_dragging'
+2025-11-23 15:25:22,471 - ERROR - Error in detection loop: 'GestureControlPro' object has no attribute 'is_dragging'
+2025-11-23 15:25:22,636 - ERROR - Error in detection loop: 'GestureControlPro' object has no attribute 'is_dragging'
+2025-11-23 15:25:22,770 - ERROR - Error in detection loop: 'GestureControlPro' object has no attribute 'is_dragging'
+2025-11-23 15:25:22,914 - ERROR - Error in detection loop: 'GestureControlPro' object has no attribute 'is_dragging'
+2025-11-23 15:25:23,084 - ERROR - Error in detection loop: 'GestureControlPro' object has no attribute 'is_dragging'
+2025-11-23 15:25:23,237 - ERROR - Error in detection loop: 'GestureControlPro' object has no attribute 'is_dragging'
+2025-11-23 15:25:23,406 - ERROR - Error in detection loop: 'GestureControlPro' object has no attribute 'is_dragging'
+2025-11-23 15:25:23,567 - ERROR - Error in detection loop: 'GestureControlPro' object has no attribute 'is_dragging'
+2025-11-23 15:25:23,737 - ERROR - Error in detection loop: 'GestureControlPro' object has no attribute 'is_dragging'
+2025-11-23 15:25:23,904 - ERROR - Error in detection loop: 'GestureControlPro' object has no attribute 'is_dragging'
+2025-11-23 15:25:24,085 - ERROR - Error in detection loop: 'GestureControlPro' object has no attribute 'is_dragging'
+2025-11-23 15:25:24,251 - ERROR - Error in detection loop: 'GestureControlPro' object has no attribute 'is_dragging'
+2025-11-23 15:25:24,403 - ERROR - Error in detection loop: 'GestureControlPro' object has no attribute 'is_dragging'
+2025-11-23 15:25:42,177 - ERROR - Error updating video display: can't invoke "image" command: application has been destroyed
+2025-11-23 15:25:42,178 - ERROR - Error updating displays: invalid command name ".!frame2.!frame2.!frame.!label2"
+2025-11-23 15:25:42,179 - ERROR - Error updating video display: can't invoke "image" command: application has been destroyed
+2025-11-23 15:25:42,180 - ERROR - Error updating displays: invalid command name ".!frame2.!frame2.!frame.!label2"
+2025-11-23 15:26:02,737 - INFO - Settings loaded
+2025-11-23 15:49:33,081 - INFO - Settings loaded
+2025-11-23 15:49:37,642 - INFO - Gesture detection started
+2025-11-23 15:49:50,065 - WARNING - Action minimize_all timed out
+2025-11-23 15:51:20,535 - INFO - Gesture detection stopped
+2025-11-23 15:51:25,721 - INFO - Settings saved

@@ -6,11 +6,29 @@
   "gesture_mappings": {
     "point": "mouse_move",
     "fist": "left_click",
-    "open_palm": "scroll",
+    "pinch": "drag",
     "victory": "right_click",
+    "double_tap": "double_click",
+    "open_palm": "scroll",
+    "open_palm_down": "scroll_down",
+    "swipe_left": "prev_tab",
+    "swipe_right": "next_tab",
     "thumbs_up": "volume_up",
     "thumbs_down": "volume_down",
-    "pinch": "drag",
-    "ok_sign": "brightness_up"
+    "ok_sign": "brightness_up",
+    "peace_inverted": "brightness_down",
+    "four_fingers": "minimize_all",
+    "three_fingers": "mission_control",
+    "spread_fingers": "show_desktop",
+    "swipe_left_fast": "prev_tab",
+    "swipe_right_fast": "next_tab",
+    "zoom_in": "zoom_in",
+    "zoom_out": "zoom_out",
+    "palm_stop": "media_pause",
+    "finger_gun": "media_play",
+    "l_shape": "screenshot",
+    "call_me": "open_terminal",
+    "finger_crossed": "undo",
+    "rock_on": "lock_screen"
   }
 }

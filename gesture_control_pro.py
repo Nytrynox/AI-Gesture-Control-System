@@ -34,6 +34,7 @@ import pickle
 from collections import deque, defaultdict
 import logging
 from datetime import datetime
+import queue
 
 # Disable PyAutoGUI failsafe for smooth operation
 pyautogui.FAILSAFE = False
@@ -75,10 +76,12 @@ class GestureControlPro:
         # Camera and detection variables
         self.cap = None
         self.is_running = False
-        self.current_frame = None
         self.fps = 0
         self.frame_count = 0
         self.start_time = time.time()
+        
+        # Thread safety queue
+        self.gui_queue = queue.Queue()
         
         # Gesture detection variables
         self.current_gesture = "None"
@@ -86,35 +89,67 @@ class GestureControlPro:
         self.gesture_history = deque(maxlen=30)  # Last 30 detections
         self.gesture_stats = defaultdict(int)
         
+        # Drag state
+        self.is_dragging = False
+        self.last_gesture = None
+        self.gesture_debounce_time = 0.3  # seconds between same gesture
+        self.last_gesture_time = 0
+        
         # Performance metrics
         self.fps_history = deque(maxlen=100)
         self.detection_times = deque(maxlen=100)
         
         # Control variables
-        self.sensitivity = 0.7
+        self.sensitivity = 0.5  # Lowered default sensitivity
         self.smoothing = 0.3
         self.mouse_control_enabled = True
         self.system_control_enabled = True
         
-        # Advanced gesture mappings
+        # Comprehensive gesture mappings (A-Z features)
         self.gesture_mappings = {
+            # Mouse control gestures
             'point': 'mouse_move',
             'fist': 'left_click',
+            'pinch': 'drag',
+            'victory': 'right_click',
+            'double_tap': 'double_click',
+            
+            # Scrolling gestures
             'open_palm': 'scroll_up',
             'open_palm_down': 'scroll_down',
-            'victory': 'right_click',
+            'swipe_left': 'scroll_left',
+            'swipe_right': 'scroll_right',
+            
+            # Volume control
             'thumbs_up': 'volume_up',
             'thumbs_down': 'volume_down',
-            'pinch': 'drag',
+            
+            # Brightness control
             'ok_sign': 'brightness_up',
             'peace_inverted': 'brightness_down',
+            
+            # Window management
             'four_fingers': 'minimize_all',
-            'swipe_left': 'prev_tab',
-            'swipe_right': 'next_tab',
+            'three_fingers': 'mission_control',
+            'spread_fingers': 'show_desktop',
+            
+            # Browser/Tab navigation
+            'swipe_left_fast': 'prev_tab',
+            'swipe_right_fast': 'next_tab',
+            
+            # Zoom control
             'zoom_in': 'zoom_in',
             'zoom_out': 'zoom_out',
-            'double_tap': 'double_click',
-            'three_fingers': 'mission_control'
+            
+            # Media controls
+            'palm_stop': 'media_pause',
+            'finger_gun': 'media_play',
+            
+            # Additional gestures
+            'l_shape': 'screenshot',
+            'call_me': 'open_terminal',
+            'finger_crossed': 'undo',
+            'rock_on': 'lock_screen'
         }
         
         # Screen dimensions
@@ -125,7 +160,7 @@ class GestureControlPro:
         self.root = tk.Tk()
         self.root.title("Professional AI Gesture Control System")
         self.root.geometry("1400x900")
-        self.root.configure(bg='#2b2b2b')
+        self.root.configure(bg='#121212')  # Darker background for modern look
         
         # Configure style
         self.style = ttk.Style()
@@ -136,235 +171,273 @@ class GestureControlPro:
         self.create_header()
         self.create_main_content()
         self.create_control_panel()
-        self.create_analytics_panel()
         self.create_status_bar()
+        
+        # Start GUI update loop
+        self.root.after(10, self.process_gui_queue)
         
     def configure_styles(self):
         """Configure custom styles for the GUI"""
+        # Modern color palette
+        self.colors = {
+            'bg_dark': '#121212',
+            'bg_panel': '#1E1E1E',
+            'bg_card': '#252525',
+            'accent': '#BB86FC',  # Purple accent
+            'accent_secondary': '#03DAC6',  # Teal accent
+            'text_primary': '#FFFFFF',
+            'text_secondary': '#B0B0B0',
+            'success': '#00E676',
+            'error': '#CF6679',
+            'warning': '#FFB74D'
+        }
+        
         self.style.configure('Header.TLabel', 
-                           font=('Arial', 16, 'bold'),
-                           foreground='white',
-                           background='#2b2b2b')
+                           font=('Segoe UI', 18, 'bold'),
+                           foreground=self.colors['text_primary'],
+                           background=self.colors['bg_panel'])
         
         self.style.configure('Status.TLabel',
-                           font=('Arial', 10),
-                           foreground='#00ff00',
-                           background='#2b2b2b')
+                           font=('Segoe UI', 10),
+                           foreground=self.colors['success'],
+                           background=self.colors['bg_dark'])
         
-        self.style.configure('Control.TButton',
-                           font=('Arial', 10, 'bold'))
+        self.style.configure('Card.TFrame', background=self.colors['bg_card'])
+        
+        # Button styles
+        self.style.configure('Action.TButton',
+                           font=('Segoe UI', 10, 'bold'),
+                           background=self.colors['accent'],
+                           foreground='black',
+                           borderwidth=0,
+                           focusthickness=0,
+                           padding=10)
+        self.style.map('Action.TButton',
+                     background=[('active', '#9965f4')]) # Darker purple on hover
+                     
+        self.style.configure('Stop.TButton',
+                           font=('Segoe UI', 10, 'bold'),
+                           background=self.colors['error'],
+                           foreground='black',
+                           borderwidth=0,
+                           padding=10)
         
     def create_header(self):
         """Create the application header"""
-        header_frame = tk.Frame(self.root, bg='#1e1e1e', height=60)
-        header_frame.pack(fill='x', padx=10, pady=5)
+        header_frame = tk.Frame(self.root, bg=self.colors['bg_panel'], height=70)
+        header_frame.pack(fill='x', padx=0, pady=0)
         header_frame.pack_propagate(False)
         
-        title_label = tk.Label(header_frame, 
-                              text="🤖 Professional AI Gesture Control System",
-                              font=('Arial', 18, 'bold'),
-                              fg='#00ff00', bg='#1e1e1e')
-        title_label.pack(side='left', padx=20, pady=15)
+        # Logo/Title area
+        title_container = tk.Frame(header_frame, bg=self.colors['bg_panel'])
+        title_container.pack(side='left', padx=20, pady=15)
+        
+        icon_label = tk.Label(title_container, text="🖐️", 
+                            font=('Segoe UI', 24), bg=self.colors['bg_panel'])
+        icon_label.pack(side='left', padx=(0, 10))
+        
+        title_label = tk.Label(title_container, 
+                              text="AI Gesture Control Pro",
+                              font=('Segoe UI', 20, 'bold'),
+                              fg=self.colors['text_primary'], bg=self.colors['bg_panel'])
+        title_label.pack(side='left')
         
         # Status indicators
-        self.status_frame = tk.Frame(header_frame, bg='#1e1e1e')
+        self.status_frame = tk.Frame(header_frame, bg=self.colors['bg_panel'])
         self.status_frame.pack(side='right', padx=20, pady=15)
         
-        self.camera_status = tk.Label(self.status_frame, text="📷 Camera: OFF",
-                                     fg='red', bg='#1e1e1e', font=('Arial', 10))
-        self.camera_status.pack(side='right', padx=10)
+        self.create_status_indicator("Camera", "OFF", self.colors['error'])
+        self.create_status_indicator("AI Engine", "OFF", self.colors['error'])
         
-        self.ai_status = tk.Label(self.status_frame, text="🧠 AI: OFF",
-                                 fg='red', bg='#1e1e1e', font=('Arial', 10))
-        self.ai_status.pack(side='right', padx=10)
+    def create_status_indicator(self, label, status, color):
+        frame = tk.Frame(self.status_frame, bg=self.colors['bg_panel'])
+        frame.pack(side='right', padx=15)
         
+        lbl = tk.Label(frame, text=label, 
+                      fg=self.colors['text_secondary'], bg=self.colors['bg_panel'],
+                      font=('Segoe UI', 9))
+        lbl.pack(anchor='e')
+        
+        status_lbl = tk.Label(frame, text=status,
+                            fg=color, bg=self.colors['bg_panel'],
+                            font=('Segoe UI', 10, 'bold'))
+        status_lbl.pack(anchor='e')
+        
+        # Store reference to update later
+        setattr(self, f"{label.lower().replace(' ', '_')}_status_lbl", status_lbl)
+
     def create_main_content(self):
         """Create the main content area with video feed and controls"""
-        main_frame = tk.Frame(self.root, bg='#2b2b2b')
-        main_frame.pack(fill='both', expand=True, padx=10, pady=5)
+        main_frame = tk.Frame(self.root, bg=self.colors['bg_dark'])
+        main_frame.pack(fill='both', expand=True, padx=20, pady=20)
         
         # Left panel - Video feed
-        self.video_frame = tk.LabelFrame(main_frame, text="📹 Live Video Feed",
-                                        bg='#2b2b2b', fg='white',
-                                        font=('Arial', 12, 'bold'))
-        self.video_frame.pack(side='left', fill='both', expand=True, padx=5)
+        video_container = tk.Frame(main_frame, bg=self.colors['bg_card'], bd=0)
+        video_container.pack(side='left', fill='both', expand=True, padx=(0, 20))
+        
+        # Video Header
+        tk.Label(video_container, text="Live Feed", 
+                font=('Segoe UI', 12, 'bold'),
+                bg=self.colors['bg_card'], fg=self.colors['text_primary']).pack(anchor='w', padx=15, pady=10)
         
         # Video display
-        self.video_label = tk.Label(self.video_frame, bg='black', text="Camera Feed",
-                                   fg='white', font=('Arial', 14))
-        self.video_label.pack(padx=10, pady=10, fill='both', expand=True)
+        self.video_label = tk.Label(video_container, bg='black', text="Camera Feed Inactive",
+                                   fg=self.colors['text_secondary'], font=('Segoe UI', 14))
+        self.video_label.pack(padx=15, pady=(0, 15), fill='both', expand=True)
         
         # Video controls
-        video_controls = tk.Frame(self.video_frame, bg='#2b2b2b')
-        video_controls.pack(fill='x', padx=10, pady=5)
+        video_controls = tk.Frame(video_container, bg=self.colors['bg_card'])
+        video_controls.pack(fill='x', padx=15, pady=15)
         
-        self.start_button = tk.Button(video_controls, text="🎥 Start Camera",
-                                     command=self.start_detection,
-                                     bg='#00aa00', fg='white',
-                                     font=('Arial', 10, 'bold'))
-        self.start_button.pack(side='left', padx=5)
+        self.start_button = ttk.Button(video_controls, text="▶ Start Camera",
+                                     style='Action.TButton',
+                                     command=self.start_detection)
+        self.start_button.pack(side='left', padx=(0, 10))
         
-        self.stop_button = tk.Button(video_controls, text="⏹️ Stop Camera",
-                                    command=self.stop_detection,
-                                    bg='#aa0000', fg='white',
-                                    font=('Arial', 10, 'bold'))
-        self.stop_button.pack(side='left', padx=5)
-        
-        self.record_button = tk.Button(video_controls, text="⏺️ Record",
-                                      command=self.toggle_recording,
-                                      bg='#0066cc', fg='white',
-                                      font=('Arial', 10, 'bold'))
-        self.record_button.pack(side='left', padx=5)
+        self.stop_button = ttk.Button(video_controls, text="⏹ Stop Camera",
+                                    style='Stop.TButton',
+                                    command=self.stop_detection)
+        self.stop_button.pack(side='left', padx=(0, 10))
         
         # Right panel - Information and controls
-        self.info_frame = tk.LabelFrame(main_frame, text="📊 System Information",
-                                       bg='#2b2b2b', fg='white',
-                                       font=('Arial', 12, 'bold'),
-                                       width=400)
-        self.info_frame.pack(side='right', fill='y', padx=5)
+        self.info_frame = tk.Frame(main_frame, bg=self.colors['bg_dark'], width=400)
+        self.info_frame.pack(side='right', fill='y')
         self.info_frame.pack_propagate(False)
         
         self.create_info_displays()
         
     def create_info_displays(self):
         """Create information display panels"""
-        # Current gesture display
-        gesture_frame = tk.LabelFrame(self.info_frame, text="Current Gesture",
-                                     bg='#2b2b2b', fg='white')
-        gesture_frame.pack(fill='x', padx=10, pady=5)
+        # Current gesture card
+        gesture_card = tk.Frame(self.info_frame, bg=self.colors['bg_card'], padx=20, pady=20)
+        gesture_card.pack(fill='x', pady=(0, 20))
         
-        self.gesture_label = tk.Label(gesture_frame, text="None",
-                                     bg='#2b2b2b', fg='#00ff00',
-                                     font=('Arial', 24, 'bold'))
+        tk.Label(gesture_card, text="Detected Gesture",
+                font=('Segoe UI', 11), fg=self.colors['text_secondary'],
+                bg=self.colors['bg_card']).pack(anchor='w')
+                
+        self.gesture_label = tk.Label(gesture_card, text="None",
+                                     bg=self.colors['bg_card'], fg=self.colors['accent'],
+                                     font=('Segoe UI', 32, 'bold'))
         self.gesture_label.pack(pady=10)
         
-        self.confidence_label = tk.Label(gesture_frame, text="Confidence: 0%",
-                                        bg='#2b2b2b', fg='white',
-                                        font=('Arial', 12))
-        self.confidence_label.pack(pady=5)
+        self.confidence_bar = ttk.Progressbar(gesture_card, orient='horizontal', mode='determinate', length=200)
+        self.confidence_bar.pack(fill='x', pady=5)
         
-        # Performance metrics
-        perf_frame = tk.LabelFrame(self.info_frame, text="Performance",
-                                  bg='#2b2b2b', fg='white')
-        perf_frame.pack(fill='x', padx=10, pady=5)
+        self.confidence_label = tk.Label(gesture_card, text="Confidence: 0%",
+                                        bg=self.colors['bg_card'], fg=self.colors['text_secondary'],
+                                        font=('Segoe UI', 10))
+        self.confidence_label.pack()
         
-        self.fps_label = tk.Label(perf_frame, text="FPS: 0",
-                                 bg='#2b2b2b', fg='white')
-        self.fps_label.pack(anchor='w', padx=10, pady=2)
+        # Performance metrics card
+        perf_card = tk.Frame(self.info_frame, bg=self.colors['bg_card'], padx=20, pady=20)
+        perf_card.pack(fill='x', pady=(0, 20))
         
-        self.hands_detected_label = tk.Label(perf_frame, text="Hands: 0",
-                                           bg='#2b2b2b', fg='white')
-        self.hands_detected_label.pack(anchor='w', padx=10, pady=2)
+        tk.Label(perf_card, text="System Performance",
+                font=('Segoe UI', 11, 'bold'), fg=self.colors['text_primary'],
+                bg=self.colors['bg_card']).pack(anchor='w', pady=(0, 10))
         
-        self.processing_time_label = tk.Label(perf_frame, text="Processing: 0ms",
-                                            bg='#2b2b2b', fg='white')
-        self.processing_time_label.pack(anchor='w', padx=10, pady=2)
+        self.fps_label = self.create_metric_row(perf_card, "FPS", "0")
+        self.hands_detected_label = self.create_metric_row(perf_card, "Hands Detected", "0")
+        self.processing_time_label = self.create_metric_row(perf_card, "Latency", "0ms")
         
-        # Gesture history
-        history_frame = tk.LabelFrame(self.info_frame, text="Recent Gestures",
-                                     bg='#2b2b2b', fg='white')
-        history_frame.pack(fill='both', expand=True, padx=10, pady=5)
+        # Recent History
+        history_card = tk.Frame(self.info_frame, bg=self.colors['bg_card'], padx=20, pady=20)
+        history_card.pack(fill='both', expand=True)
         
-        self.history_listbox = tk.Listbox(history_frame, bg='#1e1e1e', fg='white',
-                                         selectbackground='#0066cc',
-                                         height=8)
-        self.history_listbox.pack(fill='both', expand=True, padx=10, pady=10)
+        tk.Label(history_card, text="Recent Activity",
+                font=('Segoe UI', 11, 'bold'), fg=self.colors['text_primary'],
+                bg=self.colors['bg_card']).pack(anchor='w', pady=(0, 10))
+                
+        self.history_listbox = tk.Listbox(history_card, bg=self.colors['bg_panel'], 
+                                        fg=self.colors['text_secondary'],
+                                        selectbackground=self.colors['accent'],
+                                        borderwidth=0, highlightthickness=0,
+                                        font=('Segoe UI', 10))
+        self.history_listbox.pack(fill='both', expand=True)
         
+    def create_metric_row(self, parent, label, value):
+        row = tk.Frame(parent, bg=self.colors['bg_card'])
+        row.pack(fill='x', pady=2)
+        
+        tk.Label(row, text=label, fg=self.colors['text_secondary'],
+                bg=self.colors['bg_card'], font=('Segoe UI', 10)).pack(side='left')
+                
+        val_label = tk.Label(row, text=value, fg=self.colors['text_primary'],
+                           bg=self.colors['bg_card'], font=('Segoe UI', 10, 'bold'))
+        val_label.pack(side='right')
+        return val_label
+            
     def create_control_panel(self):
         """Create the control panel with settings and options"""
-        control_frame = tk.LabelFrame(self.root, text="🎛️ Control Panel",
-                                     bg='#2b2b2b', fg='white',
-                                     font=('Arial', 12, 'bold'))
-        control_frame.pack(fill='x', padx=10, pady=5)
+        control_frame = tk.Frame(self.root, bg=self.colors['bg_panel'], height=100)
+        control_frame.pack(fill='x', side='bottom')
         
-        # Settings section
-        settings_frame = tk.Frame(control_frame, bg='#2b2b2b')
-        settings_frame.pack(side='left', fill='y', padx=10, pady=10)
+        # Settings container
+        settings_container = tk.Frame(control_frame, bg=self.colors['bg_panel'])
+        settings_container.pack(fill='both', padx=20, pady=15)
         
-        tk.Label(settings_frame, text="Sensitivity:",
-                bg='#2b2b2b', fg='white').pack(anchor='w')
+        # Sensitivity Slider
+        sens_frame = tk.Frame(settings_container, bg=self.colors['bg_panel'])
+        sens_frame.pack(side='left', padx=20)
+        
+        tk.Label(sens_frame, text="Sensitivity", fg=self.colors['text_secondary'],
+                bg=self.colors['bg_panel']).pack(anchor='w')
         
         self.sensitivity_var = tk.DoubleVar(value=0.7)
-        self.sensitivity_scale = tk.Scale(settings_frame, from_=0.1, to=1.0,
-                                         resolution=0.1, orient='horizontal',
-                                         variable=self.sensitivity_var,
-                                         bg='#2b2b2b', fg='white',
-                                         highlightbackground='#2b2b2b')
-        self.sensitivity_scale.pack(fill='x')
+        self.sensitivity_scale = ttk.Scale(sens_frame, from_=0.1, to=1.0,
+                                         variable=self.sensitivity_var, orient='horizontal', length=150)
+        self.sensitivity_scale.pack()
         
-        tk.Label(settings_frame, text="Smoothing:",
-                bg='#2b2b2b', fg='white').pack(anchor='w', pady=(10,0))
+        # Smoothing Slider
+        smooth_frame = tk.Frame(settings_container, bg=self.colors['bg_panel'])
+        smooth_frame.pack(side='left', padx=20)
+        
+        tk.Label(smooth_frame, text="Smoothing", fg=self.colors['text_secondary'],
+                bg=self.colors['bg_panel']).pack(anchor='w')
         
         self.smoothing_var = tk.DoubleVar(value=0.3)
-        self.smoothing_scale = tk.Scale(settings_frame, from_=0.0, to=1.0,
-                                       resolution=0.1, orient='horizontal',
-                                       variable=self.smoothing_var,
-                                       bg='#2b2b2b', fg='white',
-                                       highlightbackground='#2b2b2b')
-        self.smoothing_scale.pack(fill='x')
+        self.smoothing_scale = ttk.Scale(smooth_frame, from_=0.0, to=1.0,
+                                       variable=self.smoothing_var, orient='horizontal', length=150)
+        self.smoothing_scale.pack()
         
-        # Control options
-        options_frame = tk.Frame(control_frame, bg='#2b2b2b')
-        options_frame.pack(side='left', fill='y', padx=20, pady=10)
+        # Toggles
+        toggle_frame = tk.Frame(settings_container, bg=self.colors['bg_panel'])
+        toggle_frame.pack(side='left', padx=40)
         
         self.mouse_control_var = tk.BooleanVar(value=True)
-        mouse_cb = tk.Checkbutton(options_frame, text="Mouse Control",
-                                 variable=self.mouse_control_var,
-                                 bg='#2b2b2b', fg='white',
-                                 selectcolor='#2b2b2b',
-                                 activebackground='#2b2b2b',
-                                 activeforeground='white')
-        mouse_cb.pack(anchor='w')
-        
+        tk.Checkbutton(toggle_frame, text="Mouse Control", variable=self.mouse_control_var,
+                      bg=self.colors['bg_panel'], fg=self.colors['text_primary'],
+                      selectcolor=self.colors['bg_panel'], activebackground=self.colors['bg_panel']).pack(anchor='w')
+                      
         self.system_control_var = tk.BooleanVar(value=True)
-        system_cb = tk.Checkbutton(options_frame, text="System Control",
-                                  variable=self.system_control_var,
-                                  bg='#2b2b2b', fg='white',
-                                  selectcolor='#2b2b2b',
-                                  activebackground='#2b2b2b',
-                                  activeforeground='white')
-        system_cb.pack(anchor='w')
+        tk.Checkbutton(toggle_frame, text="System Actions", variable=self.system_control_var,
+                      bg=self.colors['bg_panel'], fg=self.colors['text_primary'],
+                      selectcolor=self.colors['bg_panel'], activebackground=self.colors['bg_panel']).pack(anchor='w')
+
+        # Action Buttons
+        btn_frame = tk.Frame(settings_container, bg=self.colors['bg_panel'])
+        btn_frame.pack(side='right')
         
-        # Action buttons
-        buttons_frame = tk.Frame(control_frame, bg='#2b2b2b')
-        buttons_frame.pack(side='right', fill='y', padx=10, pady=10)
-        
-        tk.Button(buttons_frame, text="💾 Save Settings",
-                 command=self.save_settings,
-                 bg='#0066cc', fg='white',
-                 font=('Arial', 9, 'bold')).pack(pady=2, fill='x')
-        
-        tk.Button(buttons_frame, text="📊 Show Analytics",
-                 command=self.show_analytics,
-                 bg='#9900cc', fg='white',
-                 font=('Arial', 9, 'bold')).pack(pady=2, fill='x')
-        
-        tk.Button(buttons_frame, text="🎯 Calibrate",
-                 command=self.calibrate_system,
-                 bg='#cc6600', fg='white',
-                 font=('Arial', 9, 'bold')).pack(pady=2, fill='x')
-        
-    def create_analytics_panel(self):
-        """Create the analytics panel with charts"""
-        self.analytics_window = None
-        
+        ttk.Button(btn_frame, text="Save Settings", command=self.save_settings).pack(side='left', padx=5)
+        ttk.Button(btn_frame, text="Analytics", command=self.show_analytics).pack(side='left', padx=5)
+
     def create_status_bar(self):
         """Create the status bar at the bottom"""
-        status_frame = tk.Frame(self.root, bg='#1e1e1e', height=30)
+        status_frame = tk.Frame(self.root, bg=self.colors['bg_dark'], height=25)
         status_frame.pack(fill='x', side='bottom')
         status_frame.pack_propagate(False)
         
         self.status_text = tk.Label(status_frame, text="Ready",
-                                   bg='#1e1e1e', fg='#00ff00',
-                                   font=('Arial', 10))
-        self.status_text.pack(side='left', padx=10, pady=5)
+                                   bg=self.colors['bg_dark'], fg=self.colors['text_secondary'],
+                                   font=('Segoe UI', 9))
+        self.status_text.pack(side='left', padx=10)
         
         self.time_label = tk.Label(status_frame, text="",
-                                  bg='#1e1e1e', fg='white',
-                                  font=('Arial', 10))
-        self.time_label.pack(side='right', padx=10, pady=5)
+                                  bg=self.colors['bg_dark'], fg=self.colors['text_secondary'],
+                                  font=('Segoe UI', 9))
+        self.time_label.pack(side='right', padx=10)
         
-        # Update time
         self.update_time()
         
     def update_time(self):
@@ -383,9 +456,9 @@ class GestureControlPro:
                     return
                 
                 self.is_running = True
-                self.camera_status.config(text="📷 Camera: ON", fg='green')
-                self.ai_status.config(text="🧠 AI: ON", fg='green')
-                self.status_text.config(text="Detection Active")
+                self.camera_status_lbl.config(text="ON", fg=self.colors['success'])
+                self.ai_engine_status_lbl.config(text="ACTIVE", fg=self.colors['success'])
+                self.status_text.config(text="System Active - Detecting Gestures...")
                 
                 # Start detection thread
                 self.detection_thread = threading.Thread(target=self.detection_loop)
@@ -401,28 +474,47 @@ class GestureControlPro:
     def stop_detection(self):
         """Stop the gesture detection system"""
         self.is_running = False
+        
+        # Release drag if active
+        if self.is_dragging:
+            try:
+                pyautogui.mouseUp()
+                self.is_dragging = False
+            except:
+                pass
+        
+        # Wait for thread to finish
+        if hasattr(self, 'detection_thread') and self.detection_thread.is_alive():
+            self.detection_thread.join(timeout=2.0)
+        
+        # Release camera
         if self.cap:
             self.cap.release()
+            self.cap = None
         
-        self.camera_status.config(text="📷 Camera: OFF", fg='red')
-        self.ai_status.config(text="🧠 AI: OFF", fg='red')
-        self.status_text.config(text="Detection Stopped")
+        self.camera_status_lbl.config(text="OFF", fg=self.colors['error'])
+        self.ai_engine_status_lbl.config(text="OFF", fg=self.colors['error'])
+        self.status_text.config(text="System Stopped")
         
         # Clear video display
-        self.video_label.config(image='', text="Camera Feed")
+        self.video_label.config(image='', text="Camera Feed Inactive")
         
         self.logger.info("Gesture detection stopped")
         
     def detection_loop(self):
         """Main detection loop running in separate thread"""
         prev_time = time.time()
+        frame_delay = 1.0 / 30.0  # Target 30 FPS to reduce CPU load
         
         while self.is_running:
             try:
+                loop_start = time.time()
                 start_process = time.time()
                 
                 ret, frame = self.cap.read()
                 if not ret:
+                    self.logger.warning("Failed to read frame from camera")
+                    time.sleep(0.1)
                     continue
                 
                 # Flip frame horizontally for mirror effect
@@ -432,8 +524,12 @@ class GestureControlPro:
                 # Process with MediaPipe
                 results = self.hands.process(frame_rgb)
                 
+                # Track number of hands detected
+                hands_count = 0
+                
                 # Draw hand landmarks and detect gestures
                 if results.multi_hand_landmarks:
+                    hands_count = len(results.multi_hand_landmarks)
                     for hand_landmarks in results.multi_hand_landmarks:
                         self.mp_draw.draw_landmarks(
                             frame, hand_landmarks, self.mp_hands.HAND_CONNECTIONS)
@@ -444,10 +540,26 @@ class GestureControlPro:
                         
                         if confidence > self.sensitivity_var.get():
                             self.process_gesture(gesture, confidence, landmarks)
+                        else:
+                            # Update GUI without triggering action
+                            if not self.gui_queue.full():
+                                self.gui_queue.put({
+                                    'type': 'debug',
+                                    'gesture': gesture,
+                                    'confidence': confidence
+                                })
+                else:
+                    # No hands detected - release drag if active
+                    if self.is_dragging:
+                        try:
+                            pyautogui.mouseUp()
+                            self.is_dragging = False
+                        except Exception as e:
+                            self.logger.error(f"Error releasing drag: {e}")
                 
                 # Calculate FPS
                 current_time = time.time()
-                fps = 1 / (current_time - prev_time)
+                fps = 1 / (current_time - prev_time) if (current_time - prev_time) > 0 else 0
                 prev_time = current_time
                 self.fps = fps
                 self.fps_history.append(fps)
@@ -456,17 +568,64 @@ class GestureControlPro:
                 process_time = (time.time() - start_process) * 1000
                 self.detection_times.append(process_time)
                 
-                # Update GUI
-                self.update_video_display(frame)
-                self.update_info_displays()
+                # Queue update for GUI (don't block if queue is full)
+                if not self.gui_queue.full():
+                    self.gui_queue.put({
+                        'type': 'frame',
+                        'data': frame.copy(),  # Copy frame to avoid race conditions
+                        'fps': fps,
+                        'process_time': process_time,
+                        'gesture': self.current_gesture,
+                        'confidence': self.gesture_confidence,
+                        'hands_count': hands_count
+                    })
                 
-                # Small delay to prevent excessive CPU usage
-                time.sleep(0.01)
+                # Frame rate limiting - sleep for remaining time
+                elapsed = time.time() - loop_start
+                sleep_time = max(0, frame_delay - elapsed)
+                if sleep_time > 0:
+                    time.sleep(sleep_time)
                 
             except Exception as e:
-                self.logger.error(f"Error in detection loop: {e}")
+                self.logger.error(f"Error in detection loop: {e}", exc_info=True)
                 time.sleep(0.1)
                 
+    def process_gui_queue(self):
+        """Process updates from the detection thread safely in the main thread"""
+        try:
+            processed = 0
+            max_process = 5  # Process max 5 items per call to avoid GUI freeze
+            
+            while processed < max_process:
+                update = self.gui_queue.get_nowait()
+                
+                if update['type'] == 'frame':
+                    self.update_video_display(update['data'])
+                    self.update_info_displays(update)
+                elif update['type'] == 'log':
+                    self.history_listbox.insert(0, update['message'])
+                    if self.history_listbox.size() > 50:
+                        self.history_listbox.delete(50, tk.END)
+                elif update['type'] == 'debug':
+                    # Update labels even if action not taken
+                    try:
+                        self.gesture_label.config(text=f"{update['gesture'].replace('_', ' ').title()}")
+                        self.confidence_label.config(text=f"Confidence: {update['confidence']:.0%}")
+                        self.confidence_bar['value'] = update['confidence'] * 100
+                    except Exception as e:
+                        self.logger.error(f"Error updating debug info: {e}")
+                
+                processed += 1
+                
+        except queue.Empty:
+            pass
+        except Exception as e:
+            self.logger.error(f"Error processing GUI queue: {e}")
+        finally:
+            # Schedule next check only if still running
+            if self.root and self.root.winfo_exists():
+                self.root.after(10, self.process_gui_queue)
+
     def extract_landmarks(self, hand_landmarks, frame_shape):
         """Extract normalized landmark coordinates"""
         landmarks = []
@@ -489,40 +648,40 @@ class GestureControlPro:
         wrist = points[0]
         thumb_tip = points[4]
         thumb_ip = points[3]
-        thumb_mcp = points[2]
         index_tip = points[8]
         index_pip = points[6]
-        index_mcp = points[5]
         middle_tip = points[12]
         middle_pip = points[10]
-        middle_mcp = points[9]
         ring_tip = points[16]
         ring_pip = points[14]
-        ring_mcp = points[13]
         pinky_tip = points[20]
         pinky_pip = points[18]
-        pinky_mcp = points[17]
         
         # Calculate distances for gesture detection
         thumb_index_dist = np.linalg.norm(thumb_tip - index_tip)
-        thumb_middle_dist = np.linalg.norm(thumb_tip - middle_tip)
         index_middle_dist = np.linalg.norm(index_tip - middle_tip)
         
-        # Count extended fingers
+        # Count extended fingers with improved detection
         extended_fingers = []
         
         # Thumb (different logic due to thumb orientation)
-        if thumb_tip[0] > thumb_ip[0] if thumb_tip[0] > wrist[0] else thumb_tip[0] < thumb_ip[0]:
+        thumb_extended = False
+        if wrist[0] < 0.5:  # Left hand
+            thumb_extended = thumb_tip[0] > thumb_ip[0] + 0.03
+        else:  # Right hand
+            thumb_extended = thumb_tip[0] < thumb_ip[0] - 0.03
+        
+        if thumb_extended:
             extended_fingers.append('thumb')
             
         # Other fingers (check if tip is above PIP joint)
-        if index_tip[1] < index_pip[1] - 0.02:
+        if index_tip[1] < index_pip[1] - 0.015:
             extended_fingers.append('index')
-        if middle_tip[1] < middle_pip[1] - 0.02:
+        if middle_tip[1] < middle_pip[1] - 0.015:
             extended_fingers.append('middle')
-        if ring_tip[1] < ring_pip[1] - 0.02:
+        if ring_tip[1] < ring_pip[1] - 0.015:
             extended_fingers.append('ring')
-        if pinky_tip[1] < pinky_pip[1] - 0.02:
+        if pinky_tip[1] < pinky_pip[1] - 0.015:
             extended_fingers.append('pinky')
         
         extended_count = len(extended_fingers)
@@ -594,67 +753,107 @@ class GestureControlPro:
                 return "zoom_out", 0.75
             else:
                 return "zoom_in", 0.75
+        
+        # L-shape (thumb and index perpendicular - screenshot)
+        elif (extended_count == 2 and 'thumb' in extended_fingers and 'index' in extended_fingers and
+              thumb_index_dist > 0.1):
+            # Check if thumb and index form roughly 90 degree angle
+            thumb_vector = thumb_tip - wrist
+            index_vector = index_tip - wrist
+            angle = np.arccos(np.dot(thumb_vector, index_vector) / 
+                            (np.linalg.norm(thumb_vector) * np.linalg.norm(index_vector) + 1e-6))
+            if abs(angle - np.pi/2) < 0.5:  # Roughly 90 degrees
+                return "l_shape", 0.78
+        
+        # Call me gesture (thumb and pinky extended)
+        elif (extended_count == 2 and 'thumb' in extended_fingers and 'pinky' in extended_fingers):
+            return "call_me", 0.76
+        
+        # Rock on gesture (index and pinky extended, thumb out)
+        elif (extended_count >= 2 and 'index' in extended_fingers and 'pinky' in extended_fingers and
+              'middle' not in extended_fingers and 'ring' not in extended_fingers):
+            return "rock_on", 0.77
+        
+        # Finger gun (thumb up, index extended forward)
+        elif (extended_count == 2 and 'thumb' in extended_fingers and 'index' in extended_fingers and
+              thumb_tip[1] < wrist[1]):
+            return "finger_gun", 0.74
+        
+        # Spread fingers (all extended and spread apart)
+        elif extended_count == 5:
+            # Check if fingers are spread
+            avg_spacing = (np.linalg.norm(index_tip - middle_tip) + 
+                          np.linalg.norm(middle_tip - ring_tip) + 
+                          np.linalg.norm(ring_tip - pinky_tip)) / 3
+            if avg_spacing > 0.06:
+                return "spread_fingers", 0.82
+            else:
+                return "open_palm", 0.80
+        
+        # Palm stop (all fingers together, facing camera)
+        elif extended_count == 4 and 'thumb' not in extended_fingers:
+            # Check if fingers are close together
+            fingers_close = (np.linalg.norm(index_tip - middle_tip) < 0.04 and
+                           np.linalg.norm(middle_tip - ring_tip) < 0.04)
+            if fingers_close:
+                return "palm_stop", 0.79
                 
         else:
             return "unknown", 0.3
             
     def process_gesture(self, gesture, confidence, landmarks):
         """Process detected gesture and execute corresponding action"""
+        current_time = time.time()
+        
+        # Handle drag release if we stop pinching
+        if self.is_dragging and gesture != 'pinch':
+            try:
+                pyautogui.mouseUp()
+                self.is_dragging = False
+            except Exception as e:
+                self.logger.error(f"Error releasing drag: {e}")
+            
         self.current_gesture = gesture
         self.gesture_confidence = confidence
         
+        # Debouncing - avoid repeating same gesture too quickly
+        if gesture == self.last_gesture and (current_time - self.last_gesture_time) < self.gesture_debounce_time:
+            # For continuous gestures like mouse_move, allow them through
+            if gesture not in ['point', 'pinch', 'open_palm', 'open_palm_down']:
+                return
+        
         # Add to history
         timestamp = datetime.now().strftime("%H:%M:%S")
-        self.gesture_history.append(f"{timestamp} - {gesture} ({confidence:.2f})")
+        # Only log if gesture changed
+        if gesture != self.last_gesture:
+            log_msg = f"{timestamp} - {gesture.replace('_', ' ').title()} ({confidence:.0%})"
+            self.gesture_history.append(log_msg)
+            if not self.gui_queue.full():
+                self.gui_queue.put({'type': 'log', 'message': log_msg})
+            
         self.gesture_stats[gesture] += 1
+        self.last_gesture = gesture
+        self.last_gesture_time = current_time
         
         # Execute gesture action
         if gesture in self.gesture_mappings:
             action = self.gesture_mappings[gesture]
-            self.execute_action(action, landmarks, confidence)
+            try:
+                self.execute_action(action, landmarks, confidence)
+            except Exception as e:
+                self.logger.error(f"Error executing action {action}: {e}")
             
     def execute_action(self, action, landmarks, confidence):
         """Execute the mapped action for a gesture with enhanced controls"""
         try:
             # Volume controls
             if action == 'volume_up' and self.system_control_var.get():
-                # Increase system volume using AppleScript for macOS
-                subprocess.run(['osascript', '-e', 'set volume output volume (output volume of (get volume settings) + 10)'], check=True)
-                self.status_var.set(f"Status: Volume Up")
-                self.log_gesture(f"Volume increased")
+                subprocess.run(['osascript', '-e', 'set volume output volume (output volume of (get volume settings) + 5)'], 
+                             check=False, capture_output=True, timeout=1)
                 
             elif action == 'volume_down' and self.system_control_var.get():
-                # Decrease system volume using AppleScript for macOS
-                subprocess.run(['osascript', '-e', 'set volume output volume (output volume of (get volume settings) - 10)'], check=True)
-                self.status_var.set(f"Status: Volume Down")
-                self.log_gesture(f"Volume decreased")
-                
-            elif action == 'mute_toggle' and self.system_control_var.get():
-                # Toggle mute using AppleScript for macOS
-                subprocess.run(['osascript', '-e', 'set volume output muted (not (output muted of (get volume settings)))'], check=True)
-                self.status_var.set(f"Status: Mute Toggled")
-                self.log_gesture(f"Volume muted/unmuted")
-                
-            # Brightness controls
-            elif action == 'brightness_up' and self.system_control_var.get():
-                # Increase screen brightness using AppleScript for macOS
-                subprocess.run(['osascript', '-e', '''
-                    tell application "System Events"
-                        key code 144
-                    end tell
-                '''], check=True)
-                self.status_var.set(f"Status: Brightness Up")
-                self.log_gesture(f"Brightness increased")
-                
-            elif action == 'brightness_down' and self.system_control_var.get():
-                # Decrease screen brightness using AppleScript for macOS
-                subprocess.run(['osascript', '-e', '''
-                    tell application "System Events"
-                        key code 145
-                    end tell
-                '''], check=True)
-                self.status_var.set(f"Status: Brightness Down")
-                self.log_gesture(f"Brightness decreased")
+                subprocess.run(['osascript', '-e', 'set volume output volume (output volume of (get volume settings) - 5)'], 
+                             check=False, capture_output=True, timeout=1)
                 
             # Mouse controls with enhanced functionality
             elif action == 'mouse_move' and self.mouse_control_var.get():
@@ -678,165 +877,111 @@ class GestureControlPro:
                     
             elif action == 'left_click' and self.mouse_control_var.get():
                 pyautogui.click()
-                self.status_var.set(f"Status: Left Click")
-                self.log_gesture(f"Left click executed")
                 
             elif action == 'right_click' and self.mouse_control_var.get():
                 pyautogui.rightClick()
-                self.status_var.set(f"Status: Right Click")
-                self.log_gesture(f"Right click executed")
                 
             elif action == 'scroll_up' and self.mouse_control_var.get():
                 pyautogui.scroll(3)
-                self.status_var.set(f"Status: Scroll Up")
-                self.log_gesture(f"Scrolled up")
                 
             elif action == 'scroll_down' and self.mouse_control_var.get():
                 pyautogui.scroll(-3)
-                self.status_var.set(f"Status: Scroll Down")
-                self.log_gesture(f"Scrolled down")
-                
-            elif action == 'scroll' and self.mouse_control_var.get():
-                pyautogui.scroll(3)
-                self.status_var.set(f"Status: Scroll")
-                self.log_gesture(f"Scrolled")
-                
-            # Window management
-            elif action == 'minimize_all' and self.system_control_var.get():
-                # macOS: Show desktop (F11 or Mission Control)
-                subprocess.run(['osascript', '-e', '''
-                    tell application "System Events"
-                        key code 103
-                    end tell
-                '''], check=True)
-                self.status_var.set(f"Status: Minimize All")
-                self.log_gesture(f"Minimized all windows")
-                
-            elif action == 'mission_control' and self.system_control_var.get():
-                # Open Mission Control
-                subprocess.run(['osascript', '-e', '''
-                    tell application "System Events"
-                        key code 160
-                    end tell
-                '''], check=True)
-                self.status_var.set(f"Status: Mission Control")
-                self.log_gesture(f"Opened Mission Control")
-                
-            elif action == 'expose_windows' and self.system_control_var.get():
-                # Show all windows (App Exposé)
-                subprocess.run(['osascript', '-e', '''
-                    tell application "System Events"
-                        key code 160 using control down
-                    end tell
-                '''], check=True)
-                self.status_var.set(f"Status: Expose Windows")
-                self.log_gesture(f"Showed all windows")
-                
-            # Tab and application controls
-            elif action == 'next_tab' and self.system_control_var.get():
-                pyautogui.hotkey('cmd', 'shift', ']')
-                self.status_var.set(f"Status: Next Tab")
-                self.log_gesture(f"Switched to next tab")
-                
-            elif action == 'previous_tab' and self.system_control_var.get():
-                pyautogui.hotkey('cmd', 'shift', '[')
-                self.status_var.set(f"Status: Previous Tab")
-                self.log_gesture(f"Switched to previous tab")
-                
-            elif action == 'new_tab' and self.system_control_var.get():
-                pyautogui.hotkey('cmd', 't')
-                self.status_var.set(f"Status: New Tab")
-                self.log_gesture(f"Opened new tab")
-                
-            elif action == 'close_tab' and self.system_control_var.get():
-                pyautogui.hotkey('cmd', 'w')
-                self.status_var.set(f"Status: Close Tab")
-                self.log_gesture(f"Closed tab")
-                
-            # Application switching
-            elif action == 'next_app' and self.system_control_var.get():
-                pyautogui.hotkey('cmd', 'tab')
-                self.status_var.set(f"Status: Next App")
-                self.log_gesture(f"Switched to next app")
-                
-            elif action == 'previous_app' and self.system_control_var.get():
-                pyautogui.hotkey('cmd', 'shift', 'tab')
-                self.status_var.set(f"Status: Previous App")
-                self.log_gesture(f"Switched to previous app")
-                
-            # Zoom controls
-            elif action == 'zoom_in' and self.system_control_var.get():
-                pyautogui.hotkey('cmd', '+')
-                self.status_var.set(f"Status: Zoom In")
-                self.log_gesture(f"Zoomed in")
-                
-            elif action == 'zoom_out' and self.system_control_var.get():
-                pyautogui.hotkey('cmd', '-')
-                self.status_var.set(f"Status: Zoom Out")
-                self.log_gesture(f"Zoomed out")
-                
-            elif action == 'zoom_reset' and self.system_control_var.get():
-                pyautogui.hotkey('cmd', '0')
-                self.status_var.set(f"Status: Zoom Reset")
-                self.log_gesture(f"Reset zoom")
-                
-            # Media controls
-            elif action == 'play_pause' and self.system_control_var.get():
-                pyautogui.press('space')  # Most media apps use space for play/pause
-                self.status_var.set(f"Status: Play/Pause")
-                self.log_gesture(f"Media play/pause")
-                
-            # Quick actions
-            elif action == 'screenshot' and self.system_control_var.get():
-                pyautogui.hotkey('cmd', 'shift', '3')
-                self.status_var.set(f"Status: Screenshot")
-                self.log_gesture(f"Screenshot taken")
-                
-            elif action == 'fullscreen_toggle' and self.system_control_var.get():
-                pyautogui.hotkey('cmd', 'ctrl', 'f')
-                self.status_var.set(f"Status: Fullscreen Toggle")
-                self.log_gesture(f"Toggled fullscreen")
                 
             elif action == 'drag' and self.mouse_control_var.get():
-                if not hasattr(self, '_dragging'):
+                # Start dragging if not already
+                if not self.is_dragging:
                     pyautogui.mouseDown()
-                    self._dragging = True
-                    self.status_var.set(f"Status: Drag Start")
-                    self.log_gesture(f"Drag started")
-                else:
-                    pyautogui.mouseUp()
-                    delattr(self, '_dragging')
-                    self.status_var.set(f"Status: Drag End")
-                    self.log_gesture(f"Drag ended")
+                    self.is_dragging = True
+                
+                # Move mouse while dragging (same logic as mouse_move)
+                if len(landmarks) >= 24:
+                    points = landmarks.reshape(-1, 3)
+                    index_tip = points[8][:2]
                     
-            else:
-                # Unknown action or controls disabled
-                if not (self.mouse_control_var.get() or self.system_control_var.get()):
-                    self.status_var.set(f"Status: Controls disabled")
-                else:
-                    self.status_var.set(f"Status: Unknown action - {action}")
+                    screen_x = int(index_tip[0] * self.screen_width)
+                    screen_y = int(index_tip[1] * self.screen_height)
                     
-        except subprocess.CalledProcessError as e:
-            self.logger.error(f"System command failed for action {action}: {e}")
-            self.status_var.set(f"Status: Command failed - {action}")
+                    current_pos = pyautogui.position()
+                    smooth_x = int(current_pos.x * self.smoothing_var.get() + 
+                                 screen_x * (1 - self.smoothing_var.get()))
+                    smooth_y = int(current_pos.y * self.smoothing_var.get() + 
+                                 screen_y * (1 - self.smoothing_var.get()))
+                    
+                    pyautogui.moveTo(smooth_x, smooth_y)
+
+            # Advanced System Controls
+            elif action == 'brightness_up' and self.system_control_var.get():
+                # macOS brightness up - use AppleScript for better compatibility
+                subprocess.run(['osascript', '-e', 
+                              'tell application "System Events" to key code 144'], 
+                             check=False, capture_output=True, timeout=1)
+                
+            elif action == 'brightness_down' and self.system_control_var.get():
+                # macOS brightness down
+                subprocess.run(['osascript', '-e', 
+                              'tell application "System Events" to key code 145'], 
+                             check=False, capture_output=True, timeout=1)
+                
+            elif action == 'minimize_all' and self.system_control_var.get():
+                # Show Desktop on macOS
+                subprocess.run(['osascript', '-e', 
+                              'tell application "System Events" to key code 103 using {command down}'], 
+                             check=False, capture_output=True, timeout=1)
+                
+            elif action == 'prev_tab' and self.system_control_var.get():
+                pyautogui.hotkey('command', 'shift', '[')
+                
+            elif action == 'next_tab' and self.system_control_var.get():
+                pyautogui.hotkey('command', 'shift', ']')
+                
+            elif action == 'zoom_in' and self.system_control_var.get():
+                pyautogui.hotkey('command', '+')
+                
+            elif action == 'zoom_out' and self.system_control_var.get():
+                pyautogui.hotkey('command', '-')
+                
+            elif action == 'double_click' and self.mouse_control_var.get():
+                pyautogui.doubleClick()
+                
+            elif action == 'mission_control' and self.system_control_var.get():
+                # Mission Control on macOS
+                subprocess.run(['osascript', '-e', 
+                              'tell application "System Events" to key code 160'], 
+                             check=False, capture_output=True, timeout=1)
+                             
+            elif action == 'show_desktop' and self.system_control_var.get():
+                # Show Desktop - F11
+                pyautogui.press('f11')
+                
+            elif action == 'scroll_left' and self.mouse_control_var.get():
+                pyautogui.hscroll(-3)
+                
+            elif action == 'scroll_right' and self.mouse_control_var.get():
+                pyautogui.hscroll(3)
+                
+            elif action == 'media_pause' and self.system_control_var.get():
+                pyautogui.press('playpause')
+                
+            elif action == 'media_play' and self.system_control_var.get():
+                pyautogui.press('playpause')
+                
+            elif action == 'screenshot' and self.system_control_var.get():
+                pyautogui.hotkey('command', 'shift', '4')
+                
+            elif action == 'open_terminal' and self.system_control_var.get():
+                subprocess.run(['open', '-a', 'Terminal'], 
+                             check=False, capture_output=True, timeout=1)
+                             
+            elif action == 'undo' and self.system_control_var.get():
+                pyautogui.hotkey('command', 'z')
+                
+            elif action == 'lock_screen' and self.system_control_var.get():
+                pyautogui.hotkey('command', 'ctrl', 'q')
+
+        except subprocess.TimeoutExpired:
+            self.logger.warning(f"Action {action} timed out")
         except Exception as e:
             self.logger.error(f"Error executing action {action}: {e}")
-            self.status_var.set(f"Status: Error - {action}")
-            
-        # Update action history
-        if not hasattr(self, 'action_history'):
-            self.action_history = []
-            
-        self.action_history.append({
-            'action': action,
-            'confidence': confidence,
-            'timestamp': datetime.now(),
-            'success': True
-        })
-        
-        # Keep action history limited
-        if len(self.action_history) > 100:
-            self.action_history = self.action_history[-50:]
             
     def update_video_display(self, frame):
         """Update the video display with current frame"""
@@ -855,31 +1000,31 @@ class GestureControlPro:
         except Exception as e:
             self.logger.error(f"Error updating video display: {e}")
             
-    def update_info_displays(self):
+    def update_info_displays(self, data):
         """Update information displays"""
         try:
             # Update gesture info
-            self.gesture_label.config(text=self.current_gesture.title())
-            self.confidence_label.config(text=f"Confidence: {self.gesture_confidence:.0%}")
+            gesture_text = data.get('gesture', 'None').replace('_', ' ').title()
+            self.gesture_label.config(text=gesture_text)
+            
+            confidence = data.get('confidence', 0.0)
+            self.confidence_label.config(text=f"Confidence: {confidence:.0%}")
+            self.confidence_bar['value'] = confidence * 100
             
             # Update performance metrics
-            self.fps_label.config(text=f"FPS: {self.fps:.1f}")
-            avg_process_time = np.mean(list(self.detection_times)[-10:]) if self.detection_times else 0
-            self.processing_time_label.config(text=f"Processing: {avg_process_time:.1f}ms")
+            fps = data.get('fps', 0)
+            self.fps_label.config(text=f"{fps:.1f}")
             
-            # Update gesture history
-            self.history_listbox.delete(0, tk.END)
-            for gesture in list(self.gesture_history)[-8:]:  # Show last 8
-                self.history_listbox.insert(tk.END, gesture)
-            self.history_listbox.see(tk.END)
+            process_time = data.get('process_time', 0)
+            self.processing_time_label.config(text=f"{process_time:.1f}ms")
+            
+            # Update hands detected
+            hands_count = data.get('hands_count', 0)
+            self.hands_detected_label.config(text=f"{hands_count}")
             
         except Exception as e:
             self.logger.error(f"Error updating displays: {e}")
             
-    def toggle_recording(self):
-        """Toggle video recording"""
-        messagebox.showinfo("Recording", "Recording feature will be implemented in future version")
-        
     def save_settings(self):
         """Save current settings to file"""
         try:
@@ -921,7 +1066,7 @@ class GestureControlPro:
             
     def show_analytics(self):
         """Show analytics window with performance charts"""
-        if self.analytics_window is None or not self.analytics_window.winfo_exists():
+        if not hasattr(self, 'analytics_window') or self.analytics_window is None or not self.analytics_window.winfo_exists():
             self.create_analytics_window()
         else:
             self.analytics_window.lift()
@@ -931,7 +1076,7 @@ class GestureControlPro:
         self.analytics_window = tk.Toplevel(self.root)
         self.analytics_window.title("📊 Gesture Analytics")
         self.analytics_window.geometry("800x600")
-        self.analytics_window.configure(bg='#2b2b2b')
+        self.analytics_window.configure(bg=self.colors['bg_dark'])
         
         # Create notebook for different analytics tabs
         notebook = ttk.Notebook(self.analytics_window)
@@ -943,64 +1088,30 @@ class GestureControlPro:
         
         # Create performance charts
         fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(8, 6))
-        fig.patch.set_facecolor('#2b2b2b')
+        fig.patch.set_facecolor(self.colors['bg_dark'])
         
         # FPS chart
         if self.fps_history:
-            ax1.plot(list(self.fps_history), color='#00ff00', linewidth=2)
-            ax1.set_title('FPS Over Time', color='white')
-            ax1.set_ylabel('FPS', color='white')
-            ax1.tick_params(colors='white')
-            ax1.set_facecolor('#1e1e1e')
-            ax1.grid(True, alpha=0.3)
+            ax1.plot(list(self.fps_history), color=self.colors['success'], linewidth=2)
+            ax1.set_title('FPS Over Time', color=self.colors['text_primary'])
+            ax1.set_ylabel('FPS', color=self.colors['text_secondary'])
+            ax1.tick_params(colors=self.colors['text_secondary'])
+            ax1.set_facecolor(self.colors['bg_panel'])
+            ax1.grid(True, alpha=0.1)
         
         # Processing time chart
         if self.detection_times:
-            ax2.plot(list(self.detection_times), color='#ff6600', linewidth=2)
-            ax2.set_title('Processing Time', color='white')
-            ax2.set_ylabel('Time (ms)', color='white')
-            ax2.set_xlabel('Frame', color='white')
-            ax2.tick_params(colors='white')
-            ax2.set_facecolor('#1e1e1e')
-            ax2.grid(True, alpha=0.3)
+            ax2.plot(list(self.detection_times), color=self.colors['warning'], linewidth=2)
+            ax2.set_title('Processing Time', color=self.colors['text_primary'])
+            ax2.set_ylabel('Time (ms)', color=self.colors['text_secondary'])
+            ax2.set_xlabel('Frame', color=self.colors['text_secondary'])
+            ax2.tick_params(colors=self.colors['text_secondary'])
+            ax2.set_facecolor(self.colors['bg_panel'])
+            ax2.grid(True, alpha=0.1)
         
         canvas = FigureCanvasTkAgg(fig, perf_frame)
         canvas.draw()
         canvas.get_tk_widget().pack(fill='both', expand=True)
-        
-        # Gesture statistics tab
-        stats_frame = ttk.Frame(notebook)
-        notebook.add(stats_frame, text="Gesture Stats")
-        
-        if self.gesture_stats:
-            fig2, ax3 = plt.subplots(figsize=(8, 6))
-            fig2.patch.set_facecolor('#2b2b2b')
-            
-            gestures = list(self.gesture_stats.keys())
-            counts = list(self.gesture_stats.values())
-            
-            bars = ax3.bar(gestures, counts, color=['#ff6b6b', '#4ecdc4', '#45b7d1', 
-                                                   '#96ceb4', '#ffeaa7', '#dda0dd'])
-            ax3.set_title('Gesture Recognition Statistics', color='white')
-            ax3.set_ylabel('Count', color='white')
-            ax3.tick_params(colors='white')
-            ax3.set_facecolor('#1e1e1e')
-            
-            # Add value labels on bars
-            for bar in bars:
-                height = bar.get_height()
-                ax3.text(bar.get_x() + bar.get_width()/2., height,
-                        f'{int(height)}', ha='center', va='bottom', color='white')
-            
-            canvas2 = FigureCanvasTkAgg(fig2, stats_frame)
-            canvas2.draw()
-            canvas2.get_tk_widget().pack(fill='both', expand=True)
-            
-    def calibrate_system(self):
-        """Calibrate the gesture recognition system"""
-        messagebox.showinfo("Calibration", 
-                          "Calibration wizard will be implemented in future version.\n"
-                          "Current system uses automatic calibration.")
         
     def on_closing(self):
         """Handle application closing"""
